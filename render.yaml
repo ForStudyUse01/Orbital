@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: oei-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /api/v1/health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: WEB_ORIGINS
+        sync: false
+      - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_AUDIENCE
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+      - key: SENTRY_DSN
+        sync: false

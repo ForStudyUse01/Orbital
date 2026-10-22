@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "globe-demo",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8743", "--directory", "docs"],
+      "port": 8743
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "corepack",
+      "runtimeArgs": ["pnpm", "--filter", "@oei/web", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--project", "apps/api", "uvicorn", "oei_api.main:app", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

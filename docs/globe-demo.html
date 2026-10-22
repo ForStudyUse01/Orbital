@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DAV — Interactive 3D Globe</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #05070d;
+    --panel-bg: rgba(10, 14, 26, 0.85);
+    --panel-border: rgba(255, 255, 255, 0.12);
+    --text: #e8ecf5;
+    --text-dim: #9aa5bd;
+    --accent-dark: #00e5ff;
+    --accent-light: #ff8a00;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+  }
+
+  #page {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Globe container — fixed height per spec, fills viewport here */
+  #globeWrap {
+    width: 100%;
+    height: 100vh;
+    min-height: 600px;
+    position: relative;
+  }
+
+  #globeWrap canvas { outline: none; }
+
+  /* Header */
+  #header {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 18px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  #header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+
+  #header p {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+
+  /* Theme toggle */
+  #themeToggle {
+    pointer-events: auto;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    transition: background 0.2s ease;
+  }
+  #themeToggle:hover { background: rgba(255, 255, 255, 0.1); }
+
+  /* Legend */
+  #legend {
+    position: absolute;
+    bottom: 22px;
+    left: 24px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--text-dim);
+    backdrop-filter: blur(6px);
+    z-index: 10;
+    min-width: 200px;
+  }
+  #legend strong { color: var(--text); font-size: 13px; display: block; margin-bottom: 8px; }
+  #legendGradient {
+    height: 10px;
+    border-radius: 5px;
+    margin: 6px 0;
+    background: linear-gradient(to right, #1e3a8a, #2563eb, #22c55e, #eab308, #ef4444);
+  }
+  #legendLabels { display: flex; justify-content: space-between; font-size: 11px; }
+
+  /* Tooltip — built via DOM methods (no innerHTML) to keep this safe
+     to extend with live/fetched data later. */
+  #tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    color: var(--text);
+    backdrop-filter: blur(6px);
+    z-index: 20;
+    display: none;
+    max-width: 220px;
+  }
+  #tooltip .name { font-weight: 600; margin-bottom: 2px; }
+  #tooltip .value { color: var(--accent-dark); }
+
+  #loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-dim);
+    font-size: 13px;
+    z-index: 5;
+  }
+</style>
+</head>
+<body>
+
+<div id="page">
+  <div id="header">
+    <div>
+      <h1>DAV — Global Metric Overview</h1>
+      <p>Interactive 3D globe · drag to rotate · scroll to zoom · hover a point for detail</p>
+    </div>
+    <button id="themeToggle" type="button">☀ Light theme</button>
+  </div>
+
+  <div id="globeWrap"></div>
+  <div id="loading">Loading globe…</div>
+
+  <div id="legend">
+    <strong>Value scale</strong>
+    <div id="legendGradient"></div>
+    <div id="legendLabels">
+      <span id="legendMin">low</span>
+      <span id="legendMax">high</span>
+    </div>
+  </div>
+
+  <!-- Tooltip content nodes are created once and updated via textContent
+       (see buildTooltipNode / updateTooltip below) — never innerHTML. -->
+  <div id="tooltip">
+    <div class="name" id="tooltipName"></div>
+    <div class="value" id="tooltipValue"></div>
+  </div>
+</div>
+
+<!-- Globe.gl: wraps Three.js/WebGL, no raw Three.js needed, no API key, no backend call for rendering -->
+<script src="https://unpkg.com/globe.gl@2.32.1/dist/globe.gl.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ───────────────────────────────────────────────────────────────
+  // 1. SAMPLE DATA — replace this block with your real DAV dataset.
+  //    Each record needs: lat, lng, name (label) and value (number).
+  //    See the "Plugging in your dataset" notes at the bottom of
+  //    this script for the country/city lookup helper.
+  // ───────────────────────────────────────────────────────────────
+  const sampleData = [
+    { name: "United States", lat: 38.9,  lng: -77.0,  value: 92 },
+    { name: "Brazil",        lat: -15.8, lng: -47.9,  value: 54 },
+    { name: "United Kingdom",lat: 51.5,  lng: -0.12,  value: 81 },
+    { name: "Nigeria",       lat: 9.08,  lng: 7.49,   value: 37 },
+    { name: "India",         lat: 28.6,  lng: 77.2,   value: 66 },
+    { name: "China",         lat: 39.9,  lng: 116.4,  value: 88 },
+    { name: "Japan",         lat: 35.68, lng: 139.69, value: 95 },
+    { name: "Australia",     lat: -35.3, lng: 149.1,  value: 73 },
+    { name: "South Africa",  lat: -25.7, lng: 28.2,   value: 42 },
+    { name: "Germany",       lat: 52.52, lng: 13.40,  value: 85 },
+    { name: "Russia",        lat: 55.75, lng: 37.6,   value: 61 },
+    { name: "Mexico",        lat: 19.43, lng: -99.13, value: 48 },
+    { name: "Egypt",         lat: 30.04, lng: 31.24,  value: 39 },
+    { name: "Canada",        lat: 45.42, lng: -75.7,  value: 79 },
+    { name: "Indonesia",     lat: -6.2,  lng: 106.85, value: 52 }
+  ];
+
+  // Flight-path style connections between a few sample hubs (optional layer).
+  const samplePaths = [
+    [[38.9, -77.0], [51.5, -0.12]],
+    [[51.5, -0.12], [28.6, 77.2]],
+    [[39.9, 116.4], [35.68, 139.69]]
+  ];
+
+  // Pulse rings at the top-3 values (optional layer).
+  const topByValue = [...sampleData].sort((a, b) => b.value - a.value).slice(0, 3);
+  const sampleRings = topByValue.map(d => ({
+    lat: d.lat,
+    lng: d.lng,
+    maxR: 6,
+    propagationSpeed: 2,
+    repeatPeriod: 1400
+  }));
+
+  // ───────────────────────────────────────────────────────────────
+  // 2. Colour scale — maps a value to a colour on a low→high ramp.
+  // ───────────────────────────────────────────────────────────────
+  const COLOR_STOPS = ["#1e3a8a", "#2563eb", "#22c55e", "#eab308", "#ef4444"];
+
+  function lerpColor(a, b, t) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const ar = (pa >> 16) & 255, ag = (pa >> 8) & 255, ab = pa & 255;
+    const br = (pb >> 16) & 255, bg = (pb >> 8) & 255, bb = pb & 255;
+    const r = Math.round(ar + (br - ar) * t);
+    const g = Math.round(ag + (bg - ag) * t);
+    const bl = Math.round(ab + (bb - ab) * t);
+    return `rgb(${r}, ${g}, ${bl})`;
+  }
+
+  function valueToColor(value, min, max) {
+    if (max === min) return COLOR_STOPS[0];
+    const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
+    const segment = t * (COLOR_STOPS.length - 1);
+    const i = Math.min(COLOR_STOPS.length - 2, Math.floor(segment));
+    const localT = segment - i;
+    return lerpColor(COLOR_STOPS[i], COLOR_STOPS[i + 1], localT);
+  }
+
+  const values = sampleData.map(d => d.value);
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+
+  const points = sampleData.map(d => ({
+    ...d,
+    color: valueToColor(d.value, minVal, maxVal)
+  }));
+
+  document.getElementById("legendMin").textContent = minVal;
+  document.getElementById("legendMax").textContent = maxVal;
+
+  // ───────────────────────────────────────────────────────────────
+  // 3. Theme setup (dark / light texture + atmosphere colour)
+  // ───────────────────────────────────────────────────────────────
+  const THEMES = {
+    dark: {
+      texture: "https://unpkg.com/three-globe/example/img/earth-night.jpg",
+      atmosphere: "#00e5ff",
+      bg: "#05070d",
+      label: "☀ Light theme"
+    },
+    light: {
+      texture: "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
+      atmosphere: "#ff8a00",
+      bg: "#eef2f9",
+      label: "🌙 Dark theme"
+    }
+  };
+
+  let currentTheme = "dark";
+
+  // ───────────────────────────────────────────────────────────────
+  // 4. Globe init
+  // ───────────────────────────────────────────────────────────────
+  const wrap = document.getElementById("globeWrap");
+  const tooltip = document.getElementById("tooltip");
+  const tooltipName = document.getElementById("tooltipName");
+  const tooltipValue = document.getElementById("tooltipValue");
+
+  function updateTooltip(point) {
+    if (!point) {
+      tooltip.style.display = "none";
+      return;
+    }
+    tooltipName.textContent = point.name;
+    tooltipValue.textContent = "Value: " + point.value;
+    tooltip.style.display = "block";
+  }
+
+  const globe = Globe()(wrap)
+    .globeImageUrl(THEMES.dark.texture)
+    .backgroundColor("rgba(0,0,0,0)")
+    .showAtmosphere(true)
+    .atmosphereColor(THEMES.dark.atmosphere)
+    .atmosphereAltitude(0.18)
+    .pointsData(points)
+    .pointLat("lat")
+    .pointLng("lng")
+    .pointColor("color")
+    .pointAltitude(0.02)
+    .pointRadius(0.5)
+    .pointLabel(d => d.name + ": " + d.value)
+    .pathsData(samplePaths)
+    .pathPoints(p => p)
+    .pathPointLat(p => p[0])
+    .pathPointLng(p => p[1])
+    .pathColor(() => "rgba(0, 229, 255, 0.55)")
+    .pathDashLength(0.4)
+    .pathDashGap(0.2)
+    .pathDashAnimateTime(4000)
+    .ringsData(sampleRings)
+    .ringColor(() => t => `rgba(255, 138, 0, ${1 - t})`)
+    .ringMaxRadius("maxR")
+    .ringPropagationSpeed("propagationSpeed")
+    .ringRepeatPeriod("repeatPeriod")
+    .onPointHover(updateTooltip);
+
+  const loadingEl = document.getElementById("loading");
+  if (loadingEl) loadingEl.remove();
+
+  // Custom tooltip follows the cursor over the canvas.
+  wrap.addEventListener("mousemove", e => {
+    if (tooltip.style.display === "block") {
+      tooltip.style.left = e.clientX + 14 + "px";
+      tooltip.style.top = e.clientY + 14 + "px";
+    }
+  });
+
+  // Auto-rotate.
+  globe.controls().autoRotate = true;
+  globe.controls().autoRotateSpeed = 0.35;
+
+  // Initial camera.
+  globe.pointOfView({ lat: 20, lng: 0, altitude: 2.1 }, 900);
+
+  // Resize handling.
+  function handleResize() {
+    globe.width(wrap.offsetWidth).height(wrap.offsetHeight);
+  }
+  window.addEventListener("resize", handleResize);
+  handleResize();
+
+  // ───────────────────────────────────────────────────────────────
+  // 5. Theme toggle
+  // ───────────────────────────────────────────────────────────────
+  document.getElementById("themeToggle").addEventListener("click", function () {
+    currentTheme = currentTheme === "dark" ? "light" : "dark";
+    const t = THEMES[currentTheme];
+    globe.globeImageUrl(t.texture).atmosphereColor(t.atmosphere);
+    document.body.style.background = t.bg;
+    this.textContent = t.label;
+  });
+})();
+
+/*
+  ───────────────────────────────────────────────────────────────────
+  PLUGGING IN YOUR DAV DATASET
+  ───────────────────────────────────────────────────────────────────
+  1. Replace `sampleData` with your real rows. Each row needs:
+       { name: <label string>, lat: <number>, lng: <number>, value: <number> }
+
+  2. If your dataset only has country/city names (no coordinates):
+     add a lookup table and map before building `points`, e.g.
+
+       const COUNTRY_COORDS = {
+         "United States": { lat: 38.9,  lng: -77.0 },
+         "Brazil":        { lat: -15.8, lng: -47.9 },
+         // ...one entry per country/city you have
+       };
+
+       const sampleData = rawRows.map(row => {
+         const coord = COUNTRY_COORDS[row.country];
+         return coord
+           ? { name: row.country, lat: coord.lat, lng: coord.lng, value: row.value }
+           : null;
+       }).filter(Boolean);
+
+     For a larger set of names, use a public lookup table (e.g. the
+     "countries-and-timezones" or "world-countries" npm datasets, or
+     a city/country-to-lat-lng CSV) instead of typing coordinates by hand.
+
+  3. If loading from a file (CSV/JSON) instead of inlining it, fetch it
+     and build `sampleData` from the response before the globe init runs.
+     Note: fetching a local file via `fetch()` requires serving the page
+     over http(s) (e.g. `npx serve .`) rather than double-clicking it,
+     because browsers block `fetch` on `file://` for security reasons.
+     Keeping the data inlined (as in `sampleData` above) is what makes
+     double-click-to-run work with zero setup.
+
+  4. The colour scale in `valueToColor` already stretches between your
+     data's own min/max — no changes needed there unless you want a
+     different ramp (edit COLOR_STOPS).
+  ───────────────────────────────────────────────────────────────────
+*/
+</script>
+</body>
+</html>

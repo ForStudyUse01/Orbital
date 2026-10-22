@@ -1,0 +1,14 @@
+{
+  "name": "orbital-environment-intelligence",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "dev": "pnpm --filter @oei/web dev",
+    "build": "pnpm --filter @oei/web build",
+    "test": "pnpm --filter @oei/web test",
+    "lint": "pnpm --filter @oei/web lint",
+    "typecheck": "pnpm --filter @oei/contracts typecheck && pnpm --filter @oei/web typecheck",
+    "contracts:generate": "uv run --project apps/api python tools/export_openapi.py && pnpm --filter @oei/contracts generate"
+  }
+}

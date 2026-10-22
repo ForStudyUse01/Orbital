@@ -1,0 +1,41 @@
+name: Current data synchronization
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: current-data-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  synchronize:
+    runs-on: ubuntu-latest
+    environment: production-data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.19"
+          enable-cache: true
+      - run: uv sync --project apps/api --frozen
+      - name: Download and checksum fallback sources
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SPACE_TRACK_USERNAME: ${{ secrets.SPACE_TRACK_USERNAME }}
+          SPACE_TRACK_PASSWORD: ${{ secrets.SPACE_TRACK_PASSWORD }}
+        run: uv run --project apps/api oei-pipeline sync-current --output data/raw
+      - name: Preserve diagnostic input on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-current-sync
+          path: data/raw
+          if-no-files-found: ignore

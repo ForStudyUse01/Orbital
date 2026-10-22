@@ -1,0 +1,25 @@
+name: Scheduled quality audit
+
+on:
+  schedule:
+    - cron: "43 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.19"
+      - run: uv sync --project apps/api --extra dev --frozen
+      - run: uv run --project apps/api pytest apps/api/tests
+      - run: uv run --project apps/api oei-pipeline fixture-release --output data/public --release-id audit-${{ github.run_id }} --date 2026-09-01
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validated-audit-release
+          path: data/public
